@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState, useCallback } from "react";
 import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw } from "lucide-react";
-import { editImage } from "@/server/edit.functions";
+import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 
