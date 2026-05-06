@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState, useCallback } from "react";
-import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw } from "lucide-react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2 } from "lucide-react";
 import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
@@ -27,6 +27,74 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [brushSize, setBrushSize] = useState(30);
+  const [hasMask, setHasMask] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const drawingRef = useRef(false);
+
+  // Initialize canvas to image natural size when original changes
+  useEffect(() => {
+    if (!original) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = canvasRef.current;
+      if (!c) return;
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext("2d");
+      ctx?.clearRect(0, 0, c.width, c.height);
+      setHasMask(false);
+    };
+    img.src = original;
+  }, [original]);
+
+  const getCanvasPos = (e: React.PointerEvent) => {
+    const c = canvasRef.current!;
+    const rect = c.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * c.width,
+      y: ((e.clientY - rect.top) / rect.height) * c.height,
+    };
+  };
+
+  const draw = (e: React.PointerEvent) => {
+    if (!drawingRef.current) return;
+    const c = canvasRef.current!;
+    const ctx = c.getContext("2d")!;
+    const { x, y } = getCanvasPos(e);
+    const r = (brushSize / 100) * Math.max(c.width, c.height) / 10;
+    ctx.fillStyle = "rgba(255, 40, 80, 0.55)";
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    setHasMask(true);
+  };
+
+  const clearMask = () => {
+    const c = canvasRef.current;
+    if (!c) return;
+    c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+    setHasMask(false);
+  };
+
+  const buildMaskedImage = async (): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        if (canvasRef.current) ctx.drawImage(canvasRef.current, 0, 0);
+        resolve(c.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      img.src = original!;
+    });
+  };
 
   const onFile = (f: File | undefined) => {
     if (!f) return;
@@ -38,20 +106,40 @@ function Index() {
     reader.readAsDataURL(f);
   };
 
+  const PRESERVE = " IMPORTANT: Keep the exact same composition, camera angle, framing, perspective, lighting, colors and all unaffected areas pixel-identical to the original. Do not crop, rotate, or change the aspect ratio.";
+
   const run = useCallback(async (p: string) => {
     if (!original || !p.trim()) return;
     setLoading(true);
     try {
-      const r = await editImage({ data: { imageDataUrl: original, prompt: p } });
+      let imageToSend = original;
+      let finalPrompt = p + PRESERVE;
+      if (hasMask) {
+        imageToSend = await buildMaskedImage();
+        finalPrompt =
+          `Remove the object/area marked with the red/pink overlay in the image and seamlessly inpaint the background behind it. ${p ? "Additional instruction: " + p + ". " : ""}` +
+          PRESERVE;
+      }
+      const r = await editImage({ data: { imageDataUrl: imageToSend, prompt: finalPrompt } });
       setResult(r.image);
       setSliderPos(50);
+      clearMask();
+      setSelectMode(false);
       toast.success("تم التعديل بنجاح");
     } catch (e: any) {
       toast.error(e?.message || "حدث خطأ");
     } finally {
       setLoading(false);
     }
-  }, [original]);
+  }, [original, hasMask]);
+
+  const removeSelected = () => {
+    if (!hasMask) {
+      toast.error("حدد المنطقة المراد إزالتها أولاً");
+      return;
+    }
+    run("Remove the marked object");
+  };
 
   const download = () => {
     if (!result) return;
@@ -65,6 +153,8 @@ function Index() {
     setOriginal(null);
     setResult(null);
     setPrompt("");
+    setSelectMode(false);
+    setHasMask(false);
   };
 
   return (
