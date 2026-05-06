@@ -204,7 +204,17 @@ function Index() {
             {/* Compare slider */}
             <div className="relative mx-auto max-w-2xl rounded-2xl overflow-hidden border border-border bg-secondary/30 select-none"
               style={{ aspectRatio: "1 / 1" }}>
-              <img src={original} alt="الأصلية" className="absolute inset-0 w-full h-full object-contain" draggable={false} />
+              <img ref={imgRef} src={original} alt="الأصلية" className="absolute inset-0 w-full h-full object-contain" draggable={false} />
+              {/* Selection canvas overlay */}
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full object-contain"
+                style={{ pointerEvents: selectMode && !result ? "auto" : "none", touchAction: "none", cursor: selectMode ? "crosshair" : "default" }}
+                onPointerDown={(e) => { if (!selectMode) return; (e.target as Element).setPointerCapture(e.pointerId); drawingRef.current = true; draw(e); }}
+                onPointerMove={draw}
+                onPointerUp={() => { drawingRef.current = false; }}
+                onPointerLeave={() => { drawingRef.current = false; }}
+              />
               {result && (
                 <>
                   <div className="absolute inset-0 overflow-hidden" style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}>
@@ -231,6 +241,32 @@ function Index() {
                 </div>
               )}
             </div>
+
+            {/* Selection toolbar */}
+            {!result && (
+              <div className="max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-3 bg-secondary/60 border border-border rounded-2xl p-3">
+                <button
+                  onClick={() => setSelectMode((v) => !v)}
+                  className={`px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1 transition ${selectMode ? "bg-primary text-primary-foreground" : "bg-background border border-border"}`}
+                >
+                  <Brush className="w-4 h-4" /> {selectMode ? "وضع التحديد مفعّل" : "تحديد منطقة للإزالة"}
+                </button>
+                {selectMode && (
+                  <>
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      حجم الفرشاة
+                      <input type="range" min={5} max={100} value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-24" />
+                    </label>
+                    <button onClick={clearMask} disabled={!hasMask} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      <Eraser className="w-4 h-4" /> مسح التحديد
+                    </button>
+                    <button onClick={removeSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1 disabled:opacity-50" style={{ background: "var(--gradient-hero)" }}>
+                      <Trash2 className="w-4 h-4" /> إزالة المحدد
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Custom prompt */}
             <div className="max-w-2xl mx-auto">
