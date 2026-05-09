@@ -333,6 +333,28 @@ function Index() {
                   <p className="text-sm">جاري المعالجة بالذكاء الاصطناعي...</p>
                 </div>
               )}
+              {previewLoading && !loading && (
+                <div className="absolute inset-0 bg-background/70 backdrop-blur-sm flex items-center justify-center flex-col gap-3">
+                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                  <p className="text-sm">جاري إنشاء المعاينة...</p>
+                </div>
+              )}
+              {pendingResult && !loading && !previewLoading && (
+                <div className="absolute inset-0 bg-background/85 backdrop-blur-sm flex items-center justify-center p-3">
+                  <div className="flex flex-col items-center gap-3 max-w-full max-h-full">
+                    <p className="text-sm font-medium">معاينة النتيجة</p>
+                    <img src={pendingResult} alt="معاينة" className="max-w-full max-h-[60vh] object-contain rounded-xl border border-border" />
+                    <div className="flex gap-2">
+                      <button onClick={acceptPending} className="px-4 py-2 rounded-xl text-primary-foreground text-sm font-semibold" style={{ background: "var(--gradient-hero)" }}>
+                        تطبيق
+                      </button>
+                      <button onClick={rejectPending} className="px-4 py-2 rounded-xl text-sm bg-background border border-border">
+                        تجاهل
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Selection toolbar */}
@@ -369,8 +391,8 @@ function Index() {
                     <button onClick={removeSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1 disabled:opacity-50" style={{ background: "var(--gradient-hero)" }}>
                       <Trash2 className="w-4 h-4" /> إزالة المحدد
                     </button>
-                    <button onClick={fillSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
-                      <Wand className="w-4 h-4" /> إكمال المحدد
+                    <button onClick={fillSelected} disabled={!hasMask || loading || previewLoading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand className="w-4 h-4" />} إكمال المحدد (معاينة)
                     </button>
                     <button onClick={cropSelected} disabled={tool !== "rect" || !hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
                       <Crop className="w-4 h-4" /> اقتصاص
