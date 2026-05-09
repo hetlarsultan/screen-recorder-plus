@@ -27,6 +27,8 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [pendingResult, setPendingResult] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [brushSize, setBrushSize] = useState(30);
   const [hasMask, setHasMask] = useState(false);
@@ -162,9 +164,38 @@ function Index() {
     run("Remove the marked object");
   };
 
-  const fillSelected = () => {
-    if (!hasMask) { toast.error("حدد المنطقة أولاً"); return; }
-    run(prompt.trim() ? prompt : "Fill / complete the marked area naturally based on surrounding context");
+  const fillSelected = async () => {
+    if (!hasMask || !original) { toast.error("حدد المنطقة أولاً"); return; }
+    setPreviewLoading(true);
+    try {
+      const masked = await buildMaskedImage();
+      const p = prompt.trim() ? prompt : "Fill / complete the marked area naturally based on surrounding context";
+      const finalPrompt =
+        `Fill / complete the area marked with the red/pink overlay in the image naturally and seamlessly. ${prompt.trim() ? "Additional instruction: " + prompt + ". " : ""}` +
+        PRESERVE;
+      const r = await editImage({ data: { imageDataUrl: masked, prompt: finalPrompt } });
+      setPendingResult(r.image);
+      toast.success("معاينة جاهزة — راجع النتيجة قبل التطبيق");
+    } catch (e: any) {
+      toast.error(e?.message || "حدث خطأ");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const acceptPending = () => {
+    if (!pendingResult) return;
+    setResult(pendingResult);
+    setPendingResult(null);
+    setSliderPos(50);
+    clearMask();
+    setSelectMode(false);
+    toast.success("تم تطبيق النتيجة");
+  };
+
+  const rejectPending = () => {
+    setPendingResult(null);
+    toast("تم تجاهل المعاينة");
   };
 
   const cropSelected = () => {
@@ -204,6 +235,7 @@ function Index() {
     setPrompt("");
     setSelectMode(false);
     setHasMask(false);
+    setPendingResult(null);
   };
 
   return (
@@ -301,6 +333,28 @@ function Index() {
                   <p className="text-sm">جاري المعالجة بالذكاء الاصطناعي...</p>
                 </div>
               )}
+              {previewLoading && !loading && (
+                <div className="absolute inset-0 bg-background/70 backdrop-blur-sm flex items-center justify-center flex-col gap-3">
+                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                  <p className="text-sm">جاري إنشاء المعاينة...</p>
+                </div>
+              )}
+              {pendingResult && !loading && !previewLoading && (
+                <div className="absolute inset-0 bg-background/85 backdrop-blur-sm flex items-center justify-center p-3">
+                  <div className="flex flex-col items-center gap-3 max-w-full max-h-full">
+                    <p className="text-sm font-medium">معاينة النتيجة</p>
+                    <img src={pendingResult} alt="معاينة" className="max-w-full max-h-[60vh] object-contain rounded-xl border border-border" />
+                    <div className="flex gap-2">
+                      <button onClick={acceptPending} className="px-4 py-2 rounded-xl text-primary-foreground text-sm font-semibold" style={{ background: "var(--gradient-hero)" }}>
+                        تطبيق
+                      </button>
+                      <button onClick={rejectPending} className="px-4 py-2 rounded-xl text-sm bg-background border border-border">
+                        تجاهل
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Selection toolbar */}
@@ -337,8 +391,8 @@ function Index() {
                     <button onClick={removeSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1 disabled:opacity-50" style={{ background: "var(--gradient-hero)" }}>
                       <Trash2 className="w-4 h-4" /> إزالة المحدد
                     </button>
-                    <button onClick={fillSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
-                      <Wand className="w-4 h-4" /> إكمال المحدد
+                    <button onClick={fillSelected} disabled={!hasMask || loading || previewLoading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand className="w-4 h-4" />} إكمال المحدد (معاينة)
                     </button>
                     <button onClick={cropSelected} disabled={tool !== "rect" || !hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
                       <Crop className="w-4 h-4" /> اقتصاص
