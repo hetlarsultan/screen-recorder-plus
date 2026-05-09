@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2 } from "lucide-react";
+import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand } from "lucide-react";
 import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
@@ -30,6 +30,11 @@ function Index() {
   const [selectMode, setSelectMode] = useState(false);
   const [brushSize, setBrushSize] = useState(30);
   const [hasMask, setHasMask] = useState(false);
+  const [maskVisible, setMaskVisible] = useState(true);
+  const [tool, setTool] = useState<"brush" | "rect">("brush");
+  const rectStartRef = useRef<{ x: number; y: number } | null>(null);
+  const rectEndRef = useRef<{ x: number; y: number } | null>(null);
+  const baseMaskRef = useRef<ImageData | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const drawingRef = useRef(false);
@@ -64,18 +69,34 @@ function Index() {
     const c = canvasRef.current!;
     const ctx = c.getContext("2d")!;
     const { x, y } = getCanvasPos(e);
-    const r = (brushSize / 100) * Math.max(c.width, c.height) / 10;
-    ctx.fillStyle = "rgba(255, 40, 80, 0.55)";
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    setHasMask(true);
+    if (tool === "brush") {
+      const r = (brushSize / 100) * Math.max(c.width, c.height) / 10;
+      ctx.fillStyle = "rgba(255, 40, 80, 0.55)";
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      setHasMask(true);
+    } else {
+      rectEndRef.current = { x, y };
+      if (baseMaskRef.current) ctx.putImageData(baseMaskRef.current, 0, 0);
+      else ctx.clearRect(0, 0, c.width, c.height);
+      const s = rectStartRef.current!;
+      ctx.fillStyle = "rgba(255, 40, 80, 0.45)";
+      ctx.fillRect(s.x, s.y, x - s.x, y - s.y);
+      ctx.strokeStyle = "rgba(255, 40, 80, 0.95)";
+      ctx.lineWidth = Math.max(2, c.width / 400);
+      ctx.strokeRect(s.x, s.y, x - s.x, y - s.y);
+      setHasMask(true);
+    }
   };
 
   const clearMask = () => {
     const c = canvasRef.current;
     if (!c) return;
     c.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+    baseMaskRef.current = null;
+    rectStartRef.current = null;
+    rectEndRef.current = null;
     setHasMask(false);
   };
 
@@ -139,6 +160,34 @@ function Index() {
       return;
     }
     run("Remove the marked object");
+  };
+
+  const fillSelected = () => {
+    if (!hasMask) { toast.error("حدد المنطقة أولاً"); return; }
+    run(prompt.trim() ? prompt : "Fill / complete the marked area naturally based on surrounding context");
+  };
+
+  const cropSelected = () => {
+    if (tool !== "rect" || !rectStartRef.current || !rectEndRef.current || !original) {
+      toast.error("استخدم أداة المستطيل لتحديد منطقة الاقتصاص");
+      return;
+    }
+    const s = rectStartRef.current, e = rectEndRef.current;
+    const x = Math.min(s.x, e.x), y = Math.min(s.y, e.y);
+    const w = Math.abs(e.x - s.x), h = Math.abs(e.y - s.y);
+    if (w < 5 || h < 5) { toast.error("المنطقة صغيرة جداً"); return; }
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      c.getContext("2d")!.drawImage(img, x, y, w, h, 0, 0, w, h);
+      setResult(c.toDataURL("image/png"));
+      setSliderPos(50);
+      clearMask();
+      setSelectMode(false);
+      toast.success("تم الاقتصاص");
+    };
+    img.src = original;
   };
 
   const download = () => {
@@ -209,8 +258,20 @@ function Index() {
               <canvas
                 ref={canvasRef}
                 className="absolute inset-0 w-full h-full object-contain"
-                style={{ pointerEvents: selectMode && !result ? "auto" : "none", touchAction: "none", cursor: selectMode ? "crosshair" : "default" }}
-                onPointerDown={(e) => { if (!selectMode) return; (e.target as Element).setPointerCapture(e.pointerId); drawingRef.current = true; draw(e); }}
+                style={{ pointerEvents: selectMode && !result ? "auto" : "none", touchAction: "none", cursor: selectMode ? "crosshair" : "default", opacity: maskVisible ? 1 : 0 }}
+                onPointerDown={(e) => {
+                  if (!selectMode) return;
+                  (e.target as Element).setPointerCapture(e.pointerId);
+                  drawingRef.current = true;
+                  if (tool === "rect") {
+                    const c = canvasRef.current!;
+                    const ctx = c.getContext("2d")!;
+                    baseMaskRef.current = ctx.getImageData(0, 0, c.width, c.height);
+                    rectStartRef.current = getCanvasPos(e);
+                    rectEndRef.current = getCanvasPos(e);
+                  }
+                  draw(e);
+                }}
                 onPointerMove={draw}
                 onPointerUp={() => { drawingRef.current = false; }}
                 onPointerLeave={() => { drawingRef.current = false; }}
@@ -249,19 +310,38 @@ function Index() {
                   onClick={() => setSelectMode((v) => !v)}
                   className={`px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1 transition ${selectMode ? "bg-primary text-primary-foreground" : "bg-background border border-border"}`}
                 >
-                  <Brush className="w-4 h-4" /> {selectMode ? "وضع التحديد مفعّل" : "تحديد منطقة للإزالة"}
+                  <Brush className="w-4 h-4" /> {selectMode ? "وضع التحديد مفعّل" : "تحديد منطقة"}
                 </button>
                 {selectMode && (
                   <>
+                    <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1">
+                      <button onClick={() => setTool("brush")} className={`px-2 py-1 rounded-lg text-xs flex items-center gap-1 ${tool === "brush" ? "bg-primary text-primary-foreground" : ""}`}>
+                        <Brush className="w-3 h-3" /> فرشاة
+                      </button>
+                      <button onClick={() => setTool("rect")} className={`px-2 py-1 rounded-lg text-xs flex items-center gap-1 ${tool === "rect" ? "bg-primary text-primary-foreground" : ""}`}>
+                        <Square className="w-3 h-3" /> مستطيل
+                      </button>
+                    </div>
+                    {tool === "brush" && (
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">
                       حجم الفرشاة
                       <input type="range" min={5} max={100} value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} className="w-24" />
                     </label>
+                    )}
+                    <button onClick={() => setMaskVisible((v) => !v)} disabled={!hasMask} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      {maskVisible ? <><EyeOff className="w-4 h-4" /> إخفاء التحديد</> : <><Eye className="w-4 h-4" /> إظهار التحديد</>}
+                    </button>
                     <button onClick={clearMask} disabled={!hasMask} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
                       <Eraser className="w-4 h-4" /> مسح التحديد
                     </button>
                     <button onClick={removeSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1 disabled:opacity-50" style={{ background: "var(--gradient-hero)" }}>
                       <Trash2 className="w-4 h-4" /> إزالة المحدد
+                    </button>
+                    <button onClick={fillSelected} disabled={!hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      <Wand className="w-4 h-4" /> إكمال المحدد
+                    </button>
+                    <button onClick={cropSelected} disabled={tool !== "rect" || !hasMask || loading} className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1 disabled:opacity-50">
+                      <Crop className="w-4 h-4" /> اقتصاص
                     </button>
                   </>
                 )}
