@@ -27,6 +27,8 @@ function Index() {
   const [loading, setLoading] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [pendingResult, setPendingResult] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [brushSize, setBrushSize] = useState(30);
   const [hasMask, setHasMask] = useState(false);
@@ -162,9 +164,38 @@ function Index() {
     run("Remove the marked object");
   };
 
-  const fillSelected = () => {
-    if (!hasMask) { toast.error("حدد المنطقة أولاً"); return; }
-    run(prompt.trim() ? prompt : "Fill / complete the marked area naturally based on surrounding context");
+  const fillSelected = async () => {
+    if (!hasMask || !original) { toast.error("حدد المنطقة أولاً"); return; }
+    setPreviewLoading(true);
+    try {
+      const masked = await buildMaskedImage();
+      const p = prompt.trim() ? prompt : "Fill / complete the marked area naturally based on surrounding context";
+      const finalPrompt =
+        `Fill / complete the area marked with the red/pink overlay in the image naturally and seamlessly. ${prompt.trim() ? "Additional instruction: " + prompt + ". " : ""}` +
+        PRESERVE;
+      const r = await editImage({ data: { imageDataUrl: masked, prompt: finalPrompt } });
+      setPendingResult(r.image);
+      toast.success("معاينة جاهزة — راجع النتيجة قبل التطبيق");
+    } catch (e: any) {
+      toast.error(e?.message || "حدث خطأ");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const acceptPending = () => {
+    if (!pendingResult) return;
+    setResult(pendingResult);
+    setPendingResult(null);
+    setSliderPos(50);
+    clearMask();
+    setSelectMode(false);
+    toast.success("تم تطبيق النتيجة");
+  };
+
+  const rejectPending = () => {
+    setPendingResult(null);
+    toast("تم تجاهل المعاينة");
   };
 
   const cropSelected = () => {
@@ -204,6 +235,7 @@ function Index() {
     setPrompt("");
     setSelectMode(false);
     setHasMask(false);
+    setPendingResult(null);
   };
 
   return (
