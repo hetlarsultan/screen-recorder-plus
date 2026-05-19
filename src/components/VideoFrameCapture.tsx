@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Upload, Video, Camera, Download, Trash2, Play, Pause } from "lucide-react";
+import { Upload, Video, Camera, Download, Trash2, Play, Pause, Zap, Square } from "lucide-react";
 import { toast } from "sonner";
 
 type Frame = { id: string; url: string; time: number; w: number; h: number };
@@ -9,6 +9,12 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
   const [frames, setFrames] = useState<Frame[]>([]);
   const [playing, setPlaying] = useState(false);
   const [meta, setMeta] = useState<{ w: number; h: number; d: number } | null>(null);
+  const [autoCount, setAutoCount] = useState(10);
+  const [autoStart, setAutoStart] = useState(0);
+  const [autoEnd, setAutoEnd] = useState(0);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoProgress, setAutoProgress] = useState(0);
+  const cancelRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -62,6 +68,59 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
   };
 
   const remove = (id: string) => setFrames((p) => p.filter((f) => f.id !== id));
+
+  const captureAt = (time: number): Promise<Frame> =>
+    new Promise((resolve, reject) => {
+      const v = videoRef.current;
+      if (!v || !v.videoWidth) return reject(new Error("الفيديو غير جاهز"));
+      const onSeeked = () => {
+        v.removeEventListener("seeked", onSeeked);
+        const c = document.createElement("canvas");
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        const ctx = c.getContext("2d")!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(v, 0, 0, c.width, c.height);
+        resolve({
+          id: crypto.randomUUID(),
+          url: c.toDataURL("image/png"),
+          time: v.currentTime,
+          w: c.width,
+          h: c.height,
+        });
+      };
+      v.addEventListener("seeked", onSeeked);
+      v.currentTime = time;
+    });
+
+  const autoCapture = async () => {
+    const v = videoRef.current;
+    if (!v || !v.duration) { toast.error("الفيديو غير جاهز"); return; }
+    const n = Math.max(2, Math.min(200, Math.floor(autoCount)));
+    const start = Math.max(0, Math.min(v.duration, autoStart));
+    const end = Math.max(start + 0.05, Math.min(v.duration, autoEnd || v.duration));
+    if (!v.paused) { v.pause(); setPlaying(false); }
+    setAutoRunning(true);
+    cancelRef.current = false;
+    setAutoProgress(0);
+    const collected: Frame[] = [];
+    try {
+      for (let i = 0; i < n; i++) {
+        if (cancelRef.current) break;
+        const t = start + ((end - start) * i) / (n - 1);
+        const f = await captureAt(t);
+        collected.push(f);
+        setAutoProgress(i + 1);
+      }
+      setFrames((prev) => [...collected.reverse(), ...prev]);
+      toast.success(`تم التقاط ${collected.length} لقطة`);
+    } catch (e: any) {
+      toast.error(e?.message || "فشل الالتقاط التلقائي");
+    } finally {
+      setAutoRunning(false);
+    }
+  };
 
   return (
     <section className="space-y-6">
@@ -126,6 +185,74 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
             >
               <Camera className="w-4 h-4" /> التقاط بأعلى دقة
             </button>
+          </div>
+
+          <div className="max-w-3xl mx-auto bg-secondary/60 border border-border rounded-2xl p-3 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Zap className="w-4 h-4 text-primary" /> التقاط تلقائي
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <label className="flex flex-col gap-1">
+                <span className="text-muted-foreground">عدد الإطارات (2-200)</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={200}
+                  value={autoCount}
+                  onChange={(e) => setAutoCount(Number(e.target.value))}
+                  className="px-2 py-1.5 rounded-lg bg-background border border-border"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-muted-foreground">من ثانية</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  max={meta?.d ?? undefined}
+                  value={autoStart}
+                  onChange={(e) => setAutoStart(Number(e.target.value))}
+                  className="px-2 py-1.5 rounded-lg bg-background border border-border"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-muted-foreground">إلى ثانية {meta ? `(${meta.d.toFixed(1)})` : ""}</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  max={meta?.d ?? undefined}
+                  value={autoEnd}
+                  onChange={(e) => setAutoEnd(Number(e.target.value))}
+                  placeholder="نهاية الفيديو"
+                  className="px-2 py-1.5 rounded-lg bg-background border border-border"
+                />
+              </label>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => { if (meta) { setAutoStart(0); setAutoEnd(meta.d); } }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                استخدام المدة كاملة
+              </button>
+              {autoRunning ? (
+                <button
+                  onClick={() => { cancelRef.current = true; }}
+                  className="px-4 py-2 rounded-xl text-sm bg-destructive text-destructive-foreground flex items-center gap-1"
+                >
+                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}/{autoCount})
+                </button>
+              ) : (
+                <button
+                  onClick={autoCapture}
+                  className="px-4 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1"
+                  style={{ background: "var(--gradient-hero)" }}
+                >
+                  <Zap className="w-4 h-4" /> بدء الالتقاط التلقائي
+                </button>
+              )}
+            </div>
           </div>
 
           {frames.length > 0 && (
