@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand, Maximize2 } from "lucide-react";
+import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand, Maximize2, Video } from "lucide-react";
 import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
+import { VideoFrameCapture } from "@/components/VideoFrameCapture";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -21,6 +22,7 @@ const PRESETS = [
 ];
 
 function Index() {
+  const [mode, setMode] = useState<"image" | "video">("image");
   const [original, setOriginal] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -302,6 +304,10 @@ function Index() {
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
         {!original ? (
           <section className="text-center space-y-6 py-12">
+            {mode === "video" ? (
+              <VideoFrameCapture onBack={() => setMode("image")} />
+            ) : (
+            <>
             <h2 className="text-4xl md:text-6xl font-bold leading-tight">
               عدّل صورك بسحر <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-hero)" }}>الذكاء الاصطناعي</span>
             </h2>
@@ -321,6 +327,17 @@ function Index() {
               <p className="text-sm text-muted-foreground mt-1">PNG, JPG, WEBP</p>
             </div>
             <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+
+            <div className="pt-2">
+              <button
+                onClick={() => setMode("video")}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-secondary border border-border hover:border-primary transition text-sm font-medium"
+              >
+                <Video className="w-4 h-4 text-primary" /> التقاط صور من فيديو (أعلى دقة)
+              </button>
+            </div>
+            </>
+            )}
           </section>
         ) : (
           <section className="space-y-6">
