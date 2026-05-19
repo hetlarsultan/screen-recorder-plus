@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand } from "lucide-react";
+import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand, Maximize2 } from "lucide-react";
 import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
@@ -198,6 +198,48 @@ function Index() {
     toast("تم تجاهل المعاينة");
   };
 
+  const outpaintImage = async (padPercent = 25) => {
+    if (!original) return;
+    setPreviewLoading(true);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = original;
+      });
+      const padX = Math.round((img.naturalWidth * padPercent) / 100);
+      const padY = Math.round((img.naturalHeight * padPercent) / 100);
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth + padX * 2;
+      c.height = img.naturalHeight + padY * 2;
+      const ctx = c.getContext("2d")!;
+      // Neutral gray fill marks the area to extend (model will replace it)
+      ctx.fillStyle = "rgb(200,200,200)";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, padX, padY);
+      // Subtle red border around original to mark the "keep exactly" zone
+      ctx.strokeStyle = "rgba(255, 40, 80, 0.9)";
+      ctx.lineWidth = Math.max(2, Math.min(c.width, c.height) / 400);
+      ctx.strokeRect(padX, padY, img.naturalWidth, img.naturalHeight);
+      const dataUrl = c.toDataURL("image/png");
+      const finalPrompt =
+        `Outpainting task: extend the image into the gray border area around the original photo. ` +
+        `Continue and complete any subject (body, clothing, hair, objects) that is cut off at the edges, ` +
+        `keeping the exact same clothing, style, body proportions, composition, camera angle, perspective, lighting, shadows, color palette and background style as the visible original. ` +
+        `The area inside the red rectangle must remain pixel-identical to the original — do not alter, redraw, restyle, recolor, or move anything inside it. ` +
+        `Only generate new content in the gray padding to seamlessly extend the scene. ` +
+        `Remove the red guide rectangle in the output. Output must be photorealistic and consistent with the original.`;
+      const r = await editImage({ data: { imageDataUrl: dataUrl, prompt: finalPrompt } });
+      setPendingResult(r.image);
+      toast.success("معاينة الإكمال جاهزة — راجع قبل التطبيق");
+    } catch (e: any) {
+      toast.error(e?.message || "حدث خطأ");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const cropSelected = () => {
     if (tool !== "rect" || !rectStartRef.current || !rectEndRef.current || !original) {
       toast.error("استخدم أداة المستطيل لتحديد منطقة الاقتصاص");
@@ -360,6 +402,15 @@ function Index() {
             {/* Selection toolbar */}
             {!result && (
               <div className="max-w-2xl mx-auto flex flex-wrap items-center justify-center gap-3 bg-secondary/60 border border-border rounded-2xl p-3">
+                <button
+                  onClick={() => outpaintImage(25)}
+                  disabled={loading || previewLoading}
+                  className="px-3 py-2 rounded-xl text-sm text-primary-foreground font-semibold flex items-center gap-1 disabled:opacity-50"
+                  style={{ background: "var(--gradient-hero)" }}
+                  title="إكمال الأجزاء المقطوعة من الصورة مع الحفاظ التام على الأصل"
+                >
+                  {previewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Maximize2 className="w-4 h-4" />} إكمال الصورة (Outpainting)
+                </button>
                 <button
                   onClick={() => setSelectMode((v) => !v)}
                   className={`px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1 transition ${selectMode ? "bg-primary text-primary-foreground" : "bg-background border border-border"}`}
