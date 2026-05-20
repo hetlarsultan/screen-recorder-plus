@@ -302,7 +302,7 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
                   onClick={() => { cancelRef.current = true; }}
                   className="px-4 py-2 rounded-xl text-sm bg-destructive text-destructive-foreground flex items-center gap-1"
                 >
-                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}/{autoCount})
+                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}%)
                 </button>
               ) : (
                 <button
