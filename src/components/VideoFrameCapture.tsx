@@ -94,6 +94,43 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
       v.currentTime = time;
     });
 
+  // قياس حدة الإطار الحالي للفيديو عبر تباين لابلاس على نسخة مصغرة (سريع)
+  const scoreSharpnessAtCurrent = (): number => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return 0;
+    const W = 160;
+    const H = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * W));
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const ctx = c.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(v, 0, 0, W, H);
+    const { data } = ctx.getImageData(0, 0, W, H);
+    const gray = new Float32Array(W * H);
+    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+      gray[j] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
+    let sum = 0, sumSq = 0, n = 0;
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        const lap = -4 * gray[i] + gray[i - 1] + gray[i + 1] + gray[i - W] + gray[i + W];
+        sum += lap; sumSq += lap * lap; n++;
+      }
+    }
+    if (!n) return 0;
+    const mean = sum / n;
+    return sumSq / n - mean * mean; // التباين = الحدة
+  };
+
+  const seekTo = (time: number): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const v = videoRef.current;
+      if (!v) return reject(new Error("الفيديو غير جاهز"));
+      const onSeeked = () => { v.removeEventListener("seeked", onSeeked); resolve(); };
+      v.addEventListener("seeked", onSeeked);
+      v.currentTime = time;
+    });
+
   const autoCapture = async () => {
     const v = videoRef.current;
     if (!v || !v.duration) { toast.error("الفيديو غير جاهز"); return; }
@@ -104,17 +141,41 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
     setAutoRunning(true);
     cancelRef.current = false;
     setAutoProgress(0);
-    const collected: Frame[] = [];
     try {
-      for (let i = 0; i < n; i++) {
+      // مرحلة 1: مسح كثيف وحساب الحدة لكل عينة
+      const sampleCount = Math.min(400, Math.max(n * 5, n + 10));
+      type Sample = { time: number; score: number };
+      const samples: Sample[] = [];
+      for (let i = 0; i < sampleCount; i++) {
         if (cancelRef.current) break;
-        const t = start + ((end - start) * i) / (n - 1);
-        const f = await captureAt(t);
+        const t = start + ((end - start) * i) / (sampleCount - 1);
+        await seekTo(t);
+        const score = scoreSharpnessAtCurrent();
+        samples.push({ time: t, score });
+        setAutoProgress(Math.round(((i + 1) / sampleCount) * 50));
+      }
+      if (!samples.length) { toast.error("تم الإلغاء"); return; }
+
+      // مرحلة 2: اختيار أعلى n حدة مع تباعد زمني لتجنب التكرار
+      const minGap = Math.max(0.05, (end - start) / (n * 3));
+      const sorted = [...samples].sort((a, b) => b.score - a.score);
+      const picked: Sample[] = [];
+      for (const s of sorted) {
+        if (picked.length >= n) break;
+        if (picked.every((p) => Math.abs(p.time - s.time) >= minGap)) picked.push(s);
+      }
+      picked.sort((a, b) => a.time - b.time);
+
+      // مرحلة 3: التقاط بالدقة الكاملة لكل لقطة مختارة
+      const collected: Frame[] = [];
+      for (let i = 0; i < picked.length; i++) {
+        if (cancelRef.current) break;
+        const f = await captureAt(picked[i].time);
         collected.push(f);
-        setAutoProgress(i + 1);
+        setAutoProgress(50 + Math.round(((i + 1) / picked.length) * 50));
       }
       setFrames((prev) => [...collected.reverse(), ...prev]);
-      toast.success(`تم التقاط ${collected.length} لقطة`);
+      toast.success(`تم اختيار ${collected.length} من أوضح اللقطات`);
     } catch (e: any) {
       toast.error(e?.message || "فشل الالتقاط التلقائي");
     } finally {
@@ -241,7 +302,7 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
                   onClick={() => { cancelRef.current = true; }}
                   className="px-4 py-2 rounded-xl text-sm bg-destructive text-destructive-foreground flex items-center gap-1"
                 >
-                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}/{autoCount})
+                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}%)
                 </button>
               ) : (
                 <button
