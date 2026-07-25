@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand, Maximize2, Video } from "lucide-react";
+import { Upload, Sparkles, Download, Loader2, Wand2, RotateCcw, Brush, Eraser, Trash2, Eye, EyeOff, Crop, Square, Wand, Maximize2, Video, Activity } from "lucide-react";
 import { editImage } from "@/utils/edit.functions";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { VideoFrameCapture } from "@/components/VideoFrameCapture";
+import { recordPerf } from "@/lib/perf-metrics";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -38,6 +39,8 @@ function Index() {
   const [tool, setTool] = useState<"brush" | "rect">("brush");
   const rectStartRef = useRef<{ x: number; y: number } | null>(null);
   const rectEndRef = useRef<{ x: number; y: number } | null>(null);
+  const [rectVersion, setRectVersion] = useState(0);
+  const [cropPreview, setCropPreview] = useState<string | null>(null);
   const baseMaskRef = useRef<ImageData | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -91,8 +94,34 @@ function Index() {
       ctx.lineWidth = Math.max(2, c.width / 400);
       ctx.strokeRect(s.x, s.y, x - s.x, y - s.y);
       setHasMask(true);
+      setRectVersion((v) => v + 1);
     }
   };
+
+  // Live crop preview whenever rect selection changes
+  useEffect(() => {
+    if (tool !== "rect" || !rectStartRef.current || !rectEndRef.current || !original) {
+      setCropPreview(null);
+      return;
+    }
+    const s = rectStartRef.current, e = rectEndRef.current;
+    const x = Math.min(s.x, e.x), y = Math.min(s.y, e.y);
+    const w = Math.abs(e.x - s.x), h = Math.abs(e.y - s.y);
+    if (w < 8 || h < 8) { setCropPreview(null); return; }
+    const t0 = performance.now();
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      setCropPreview(c.toDataURL("image/png"));
+      recordPerf({ category: "editor", step: "crop-preview", ms: performance.now() - t0, meta: { w: Math.round(w), h: Math.round(h) } });
+    };
+    img.src = original;
+  }, [rectVersion, tool, original]);
 
   const clearMask = () => {
     const c = canvasRef.current;
@@ -102,6 +131,7 @@ function Index() {
     rectStartRef.current = null;
     rectEndRef.current = null;
     setHasMask(false);
+    setCropPreview(null);
   };
 
   const buildMaskedImage = async (): Promise<string> => {
@@ -145,7 +175,9 @@ function Index() {
           `Remove the object/area marked with the red/pink overlay in the image and seamlessly inpaint the background behind it. ${p ? "Additional instruction: " + p + ". " : ""}` +
           PRESERVE;
       }
+      const t0 = performance.now();
       const r = await editImage({ data: { imageDataUrl: imageToSend, prompt: finalPrompt } });
+      recordPerf({ category: "editor", step: "ai-edit", ms: performance.now() - t0, meta: { masked: hasMask ? 1 : 0 } });
       setResult(r.image);
       setSliderPos(50);
       clearMask();
@@ -175,7 +207,9 @@ function Index() {
       const finalPrompt =
         `Fill / complete the area marked with the red/pink overlay in the image naturally and seamlessly. ${prompt.trim() ? "Additional instruction: " + prompt + ". " : ""}` +
         PRESERVE;
+      const t0 = performance.now();
       const r = await editImage({ data: { imageDataUrl: masked, prompt: finalPrompt } });
+      recordPerf({ category: "editor", step: "ai-fill-preview", ms: performance.now() - t0 });
       setPendingResult(r.image);
       toast.success("معاينة جاهزة — راجع النتيجة قبل التطبيق");
     } catch (e: any) {
@@ -232,7 +266,9 @@ function Index() {
         `The area inside the red rectangle must remain pixel-identical to the original — do not alter, redraw, restyle, recolor, or move anything inside it. ` +
         `Only generate new content in the gray padding to seamlessly extend the scene. ` +
         `Remove the red guide rectangle in the output. Output must be photorealistic and consistent with the original.`;
+      const t0 = performance.now();
       const r = await editImage({ data: { imageDataUrl: dataUrl, prompt: finalPrompt } });
+      recordPerf({ category: "editor", step: "ai-outpaint", ms: performance.now() - t0, meta: { pad: padPercent } });
       setPendingResult(r.image);
       toast.success("معاينة الإكمال جاهزة — راجع قبل التطبيق");
     } catch (e: any) {
@@ -293,11 +329,16 @@ function Index() {
             </div>
             <h1 className="text-lg font-bold">محرر الصور AI</h1>
           </div>
-          {original && (
-            <button onClick={reset} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
-              <RotateCcw className="w-4 h-4" /> صورة جديدة
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            <Link to="/perf" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <Activity className="w-4 h-4" /> الأداء
+            </Link>
+            {original && (
+              <button onClick={reset} className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
+                <RotateCcw className="w-4 h-4" /> صورة جديدة
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -467,6 +508,13 @@ function Index() {
                     </button>
                   </>
                 )}
+              </div>
+            )}
+
+            {cropPreview && selectMode && tool === "rect" && !result && (
+              <div className="max-w-2xl mx-auto flex items-center gap-3 bg-secondary/60 border border-border rounded-2xl p-3">
+                <div className="text-xs text-muted-foreground shrink-0">معاينة الاقتصاص الفوري:</div>
+                <img src={cropPreview} alt="crop preview" className="max-h-32 rounded-lg border border-border object-contain bg-black/20" />
               </div>
             )}
 
