@@ -98,7 +98,7 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
   const scoreSharpnessAtCurrent = (): number => {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return 0;
-    const W = 160;
+    const W = 96;
     const H = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * W));
     const c = document.createElement("canvas");
     c.width = W; c.height = H;
@@ -126,9 +126,16 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
     new Promise((resolve, reject) => {
       const v = videoRef.current;
       if (!v) return reject(new Error("الفيديو غير جاهز"));
-      const onSeeked = () => { v.removeEventListener("seeked", onSeeked); resolve(); };
+      const anyV = v as any;
+      const rvfc = anyV.requestVideoFrameCallback?.bind(v);
+      const onSeeked = () => {
+        v.removeEventListener("seeked", onSeeked);
+        if (rvfc) rvfc(() => resolve());
+        else resolve();
+      };
       v.addEventListener("seeked", onSeeked);
-      v.currentTime = time;
+      if (typeof anyV.fastSeek === "function") anyV.fastSeek(time);
+      else v.currentTime = time;
     });
 
   const autoCapture = async () => {
@@ -143,7 +150,7 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
     setAutoProgress(0);
     try {
       // مرحلة 1: مسح كثيف وحساب الحدة لكل عينة
-      const sampleCount = Math.min(400, Math.max(n * 5, n + 10));
+      const sampleCount = Math.min(120, Math.max(n * 3, n + 5));
       type Sample = { time: number; score: number };
       const samples: Sample[] = [];
       for (let i = 0; i < sampleCount; i++) {
