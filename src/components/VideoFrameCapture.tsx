@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
-import { Upload, Video, Camera, Download, Trash2, Play, Pause, Zap, Square } from "lucide-react";
+import { Upload, Video, Camera, Download, Trash2, Play, Pause, Zap, Square, Activity } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "@tanstack/react-router";
+import { recordPerf } from "@/lib/perf-metrics";
 
 type Frame = { id: string; url: string; time: number; w: number; h: number };
 
@@ -14,9 +16,17 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
   const [autoEnd, setAutoEnd] = useState(0);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState(0);
+  const [paused, setPaused] = useState(false);
   const cancelRef = useRef(false);
+  const pauseRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const waitIfPaused = async () => {
+    while (pauseRef.current && !cancelRef.current) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  };
 
   const onFile = (f: File | undefined) => {
     if (!f) return;
@@ -147,17 +157,25 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
     if (!v.paused) { v.pause(); setPlaying(false); }
     setAutoRunning(true);
     cancelRef.current = false;
+    pauseRef.current = false;
+    setPaused(false);
     setAutoProgress(0);
+    const runT0 = performance.now();
     try {
       // مرحلة 1: مسح كثيف وحساب الحدة لكل عينة
       const sampleCount = Math.min(120, Math.max(n * 3, n + 5));
       type Sample = { time: number; score: number };
       const samples: Sample[] = [];
       for (let i = 0; i < sampleCount; i++) {
+        await waitIfPaused();
         if (cancelRef.current) break;
         const t = start + ((end - start) * i) / (sampleCount - 1);
+        const seekStart = performance.now();
         await seekTo(t);
+        recordPerf({ category: "video-capture", step: "seek", ms: performance.now() - seekStart });
+        const scoreStart = performance.now();
         const score = scoreSharpnessAtCurrent();
+        recordPerf({ category: "video-capture", step: "sharpness-score", ms: performance.now() - scoreStart });
         samples.push({ time: t, score });
         setAutoProgress(Math.round(((i + 1) / sampleCount) * 50));
       }
@@ -176,17 +194,23 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
       // مرحلة 3: التقاط بالدقة الكاملة لكل لقطة مختارة
       const collected: Frame[] = [];
       for (let i = 0; i < picked.length; i++) {
+        await waitIfPaused();
         if (cancelRef.current) break;
+        const capStart = performance.now();
         const f = await captureAt(picked[i].time);
+        recordPerf({ category: "video-capture", step: "capture-full-res", ms: performance.now() - capStart, meta: { w: f.w, h: f.h } });
         collected.push(f);
         setAutoProgress(50 + Math.round(((i + 1) / picked.length) * 50));
       }
       setFrames((prev) => [...collected.reverse(), ...prev]);
+      recordPerf({ category: "video-capture", step: "auto-run-total", ms: performance.now() - runT0, meta: { picked: collected.length, samples: samples.length } });
       toast.success(`تم اختيار ${collected.length} من أوضح اللقطات`);
     } catch (e: any) {
       toast.error(e?.message || "فشل الالتقاط التلقائي");
     } finally {
       setAutoRunning(false);
+      pauseRef.current = false;
+      setPaused(false);
     }
   };
 
@@ -196,9 +220,14 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Video className="w-5 h-5 text-primary" /> التقاط صور من الفيديو
         </h2>
-        <button onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground">
-          ← رجوع
-        </button>
+        <div className="flex items-center gap-3">
+          <Link to="/perf" className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
+            <Activity className="w-4 h-4" /> الأداء
+          </Link>
+          <button onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground">
+            ← رجوع
+          </button>
+        </div>
       </div>
 
       {!videoUrl ? (
@@ -305,12 +334,23 @@ export function VideoFrameCapture({ onBack }: { onBack: () => void }) {
                 استخدام المدة كاملة
               </button>
               {autoRunning ? (
-                <button
-                  onClick={() => { cancelRef.current = true; }}
-                  className="px-4 py-2 rounded-xl text-sm bg-destructive text-destructive-foreground flex items-center gap-1"
-                >
-                  <Square className="w-4 h-4" /> إيقاف ({autoProgress}%)
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-32 h-2 bg-background rounded-full overflow-hidden border border-border">
+                    <div className="h-full transition-all" style={{ width: `${autoProgress}%`, background: "var(--gradient-hero)" }} />
+                  </div>
+                  <button
+                    onClick={() => { pauseRef.current = !pauseRef.current; setPaused(pauseRef.current); }}
+                    className="px-3 py-2 rounded-xl text-sm bg-background border border-border flex items-center gap-1"
+                  >
+                    {paused ? <><Play className="w-4 h-4" /> استئناف</> : <><Pause className="w-4 h-4" /> إيقاف مؤقت</>}
+                  </button>
+                  <button
+                    onClick={() => { cancelRef.current = true; }}
+                    className="px-3 py-2 rounded-xl text-sm bg-destructive text-destructive-foreground flex items-center gap-1"
+                  >
+                    <Square className="w-4 h-4" /> إلغاء ({autoProgress}%)
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={autoCapture}
